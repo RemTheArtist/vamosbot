@@ -1,1 +1,362 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Vamos Privé</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
+        body {
+            background: #0a0a0a;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* ── Header ── */
+        .header {
+            width: 100%;
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-logo {
+            font-size: 24px;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 700;
+            background: linear-gradient(90deg, #c9a96e, #f0d080);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-sub {
+            font-size: 11px;
+            color: rgba(255,255,255,0.4);
+            margin-top: 1px;
+        }
+
+        /* ── Loading ── */
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            gap: 16px;
+            padding: 40px;
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid rgba(201,169,110,0.2);
+            border-top-color: #c9a96e;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
+        }
+
+        /* ── Photo Container ── */
+        .photo-container {
+            width: 100%;
+            max-width: 600px;
+            padding: 16px;
+            display: none;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .photo-wrapper {
+            position: relative;
+            width: 100%;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            background: #111;
+        }
+
+        .photo-wrapper img {
+            width: 100%;
+            display: block;
+            border-radius: 16px;
+        }
+
+        /* ── Info Card ── */
+        .info-card {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .info-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        }
+
+        .info-icon {
+            font-size: 16px;
+            width: 24px;
+            text-align: center;
+        }
+
+        .info-label {
+            color: rgba(255,255,255,0.4);
+            font-size: 12px;
+            min-width: 80px;
+        }
+
+        .info-value {
+            color: #fff;
+            font-weight: 500;
+        }
+
+        .caption-text {
+            font-size: 15px;
+            line-height: 1.5;
+            color: rgba(255,255,255,0.85);
+            padding: 12px;
+            background: rgba(201,169,110,0.06);
+            border-left: 3px solid #c9a96e;
+            border-radius: 0 8px 8px 0;
+        }
+
+        /* ── Views Badge ── */
+        .views-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(201,169,110,0.15);
+            border: 1px solid rgba(201,169,110,0.3);
+            color: #c9a96e;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 6px 14px;
+            border-radius: 20px;
+            align-self: flex-start;
+        }
+
+        /* ── Watermark Notice ── */
+        .watermark-notice {
+            background: rgba(255, 100, 100, 0.08);
+            border: 1px solid rgba(255, 100, 100, 0.2);
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 12px;
+            color: rgba(255,150,150,0.8);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* ── Error State ── */
+        .error-state {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            gap: 12px;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .error-icon {
+            font-size: 48px;
+        }
+
+        .error-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #ff6b6b;
+        }
+
+        .error-text {
+            font-size: 14px;
+            color: rgba(255,255,255,0.4);
+            line-height: 1.5;
+        }
+
+        /* ── User Bar ── */
+        .user-bar {
+            width: 100%;
+            padding: 10px 20px;
+            background: rgba(201,169,110,0.06);
+            border-bottom: 1px solid rgba(201,169,110,0.1);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: rgba(255,255,255,0.5);
+        }
+
+        .user-bar span {
+            color: #c9a96e;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <div class="header">
+        <div class="header-logo">🔒</div>
+        <div>
+            <div class="header-title">Vamos Privé</div>
+            <div class="header-sub">Exclusive Content</div>
+        </div>
+    </div>
+
+    <!-- User Bar -->
+    <div class="user-bar" id="userBar">
+        👤 Συνδεδεμένος ως <span id="userDisplay">...</span>
+    </div>
+
+    <!-- Loading State -->
+    <div class="loading" id="loadingState">
+        <div class="spinner"></div>
+        <div class="loading-text">Φόρτωση φωτογραφίας...</div>
+    </div>
+
+    <!-- Photo Container -->
+    <div class="photo-container" id="photoContainer">
+
+        <div class="photo-wrapper">
+            <img id="photoImg" src="" alt="Photo">
+        </div>
+
+        <div class="watermark-notice">
+            🔏 Αυτή η φωτογραφία έχει προσωπικό watermark με τα στοιχεία σου
+        </div>
+
+        <div class="info-card">
+            <div class="caption-text" id="captionText" style="display:none"></div>
+            <div class="views-badge">
+                👁️ <span id="viewsCount">0</span> θεάσεις
+            </div>
+            <div class="info-row">
+                <span class="info-icon">📅</span>
+                <span class="info-label">Δημιουργία:</span>
+                <span class="info-value" id="createdAt">—</span>
+            </div>
+            <div class="info-row">
+                <span class="info-icon">🆔</span>
+                <span class="info-label">Photo ID:</span>
+                <span class="info-value" id="photoIdDisplay">—</span>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Error State -->
+    <div class="error-state" id="errorState">
+        <div class="error-icon">❌</div>
+        <div class="error-title">Δεν βρέθηκε</div>
+        <div class="error-text" id="errorText">Η φωτογραφία δεν υπάρχει ή έχει διαγραφεί.</div>
+    </div>
+
+    <script>
+        // ── Telegram WebApp Init ──
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        // Telegram theme
+        document.body.style.background = tg.colorScheme === 'light' ? '#f5f5f5' : '#0a0a0a';
+
+        // ── User Info ──
+        const user = tg.initDataUnsafe?.user || {};
+        const username = user.username || "unknown";
+        const userId = user.id || 0;
+        const firstName = user.first_name || "Άγνωστος";
+
+        document.getElementById("userDisplay").textContent =
+            username !== "unknown" ? `@${username}` : firstName;
+
+        // ── Get photo_id from start_param ──
+        const startParam = tg.initDataUnsafe?.start_param || "";
+        const photoId = startParam;
+
+        if (!photoId) {
+            showError("Δεν βρέθηκε φωτογραφία. Άνοιξε τον σύνδεσμο από το κανάλι.");
+        } else {
+            loadPhoto(photoId);
+        }
+
+        // ── Load Photo ──
+        async function loadPhoto(id) {
+            try {
+                // Φόρτωση metadata
+                const metaRes = await fetch(`/api/photo/${id}`);
+                if (!metaRes.ok) throw new Error("Φωτογραφία δεν βρέθηκε");
+                const meta = await metaRes.json();
+
+                // Ενημέρωση UI
+                document.getElementById("viewsCount").textContent = meta.total_views + 1;
+                document.getElementById("createdAt").textContent = meta.created_at;
+                document.getElementById("photoIdDisplay").textContent = id;
+
+                if (meta.caption) {
+                    const captionEl = document.getElementById("captionText");
+                    captionEl.textContent = meta.caption;
+                    captionEl.style.display = "block";
+                }
+
+                // Φόρτωση φωτογραφίας με watermark
+                const imgUrl = `/api/photo/${id}/image?username=${encodeURIComponent(username)}&user_id=${userId}&first_name=${encodeURIComponent(firstName)}`;
+                const imgEl = document.getElementById("photoImg");
+
+                imgEl.onload = () => {
+                    document.getElementById("loadingState").style.display = "none";
+                    document.getElementById("photoContainer").style.display = "flex";
+                };
+
+                imgEl.onerror = () => {
+                    showError("Αποτυχία φόρτωσης φωτογραφίας.");
+                };
+
+                imgEl.src = imgUrl;
+
+            } catch (err) {
+                showError(err.message);
+            }
+        }
+
+        function showError(msg) {
+            document.getElementById("loadingState").style.display = "none";
+            document.getElementById("errorText").textContent = msg;
+            document.getElementById("errorState").style.display = "flex";
+        }
+    </script>
+
+</body>
+</html>
