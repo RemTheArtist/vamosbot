@@ -21,7 +21,7 @@ BOT_USERNAME = "vamosprive_bot"
 # ⚠️ Βάλε εδώ το δημόσιο HTTPS URL του server σου (π.χ. από ngrok ή VPS)
 # Παράδειγμα ngrok: "https://abc123.ngrok.io"
 # Παράδειγμα VPS:   "https://yourdomain.com"
-WEBAPP_URL = "https://YOUR_DOMAIN_HERE"
+WEBAPP_URL = "https://vamosbot-production.up.railway.app"
 
 # ─────────────────────────────────────
 # LOGGING
