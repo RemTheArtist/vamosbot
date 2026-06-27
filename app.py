@@ -2,12 +2,15 @@ import logging
 import sqlite3
 import os
 import io
+import asyncio
 from datetime import datetime
+from threading import Thread
 
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from PIL import Image, ImageDraw, ImageFont
 import requests as req
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -23,13 +26,17 @@ TOKEN = "8800151694:AAH3L3xHMI2JtXgbrTjzyoONgY-p89yBCnc"
 ADMIN_ID = 7287706699
 CHANNEL_ID = "-1004477491962"
 BOT_USERNAME = "vamosprive_bot"
+WEBAPP_URL = "https://vamosbot-production.up.railway.app"
 DB_PATH = "bot_database.db"
+WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+flask_app = Flask(__name__)
 
 # ─────────────────────────────────────
 # DATABASE
@@ -152,12 +159,9 @@ def add_watermark(image_bytes, username, user_id):
     x = width - tw - 15
     y = height - th - 15
 
-    # Shadow
     draw.text((x+2, y+2), text, font=font, fill=(0, 0, 0, 180))
-    # Κείμενο
     draw.text((x, y), text, font=font, fill=(255, 255, 255, 220))
 
-    # Διαγώνιο watermark
     diag_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     diag_draw = ImageDraw.Draw(diag_layer)
     diag_size = max(40, int(width / 12))
@@ -182,10 +186,47 @@ def add_watermark(image_bytes, username, user_id):
     return out.read()
 
 def download_photo(file_id):
-    """Κατεβάζει φωτό από Telegram."""
     info = req.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}").json()
     path = info["result"]["file_path"]
     return req.get(f"https://api.telegram.org/file/bot{TOKEN}/{path}").content
+
+# ─────────────────────────────────────
+# FLASK ROUTES
+# ─────────────────────────────────────
+@flask_app.route("/")
+def index():
+    return send_from_directory(WEBAPP_DIR, "index.html")
+
+@flask_app.route("/api/photo/<photo_id>")
+def get_photo_api(photo_id):
+    photo = get_photo(photo_id)
+    if not photo:
+        return jsonify({"error": "Δεν βρέθηκε"}), 404
+    return jsonify({
+        "photo_id": photo[0],
+        "caption": photo[2],
+        "created_at": photo[3],
+        "total_views": get_total_views(photo_id)
+    })
+
+@flask_app.route("/api/photo/<photo_id>/image")
+def get_watermarked_photo(photo_id):
+    photo = get_photo(photo_id)
+    if not photo:
+        return jsonify({"error": "Δεν βρέθηκε"}), 404
+
+    username = request.args.get("username", "unknown")
+    user_id = request.args.get("user_id", "0")
+    first_name = request.args.get("first_name", "Άγνωστος")
+
+    save_view(photo_id, int(user_id), username, first_name)
+
+    try:
+        image_bytes = download_photo(photo[1])
+        watermarked = add_watermark(image_bytes, username, user_id)
+        return send_file(io.BytesIO(watermarked), mimetype="image/jpeg")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ─────────────────────────────────────
 # BOT HANDLERS
@@ -201,21 +242,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_new = save_view(photo_id, user.id, user.username, user.first_name)
             total = get_total_views(photo_id)
 
-            # Κατέβασμα + watermark
-            try:
-                image_bytes = download_photo(photo[1])
-                watermarked = add_watermark(image_bytes, user.username or user.first_name, user.id)
-                caption_text = photo[2] or "🖼️ Εδώ είναι η φωτογραφία!"
-
-                await update.message.reply_photo(
-                    photo=io.BytesIO(watermarked),
-                    caption=f"{caption_text}\n\n👁️ Συνολικές θεάσεις: {total}"
-                )
-            except Exception as e:
-                await update.message.reply_text(f"❌ Σφάλμα φόρτωσης: {e}")
-                return
-
-            # Ειδοποίηση admin
             if is_new:
                 await context.bot.send_message(
                     chat_id=ADMIN_ID,
@@ -231,6 +257,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ),
                     parse_mode="Markdown"
                 )
+
+            # Κουμπί Mini App
+            webapp_url = f"{WEBAPP_URL}/?photo_id={photo_id}"
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🖼️ Άνοιξε τη Φωτογραφία",
+                    web_app=WebAppInfo(url=webapp_url)
+                )]
+            ])
+
+            caption = photo[2] or "🔒 Πάτα το κουμπί για να δεις τη φωτογραφία!"
+            await update.message.reply_text(
+                f"*{caption}*\n\n👁️ Θεάσεις: {total}\n\n⬇️ Πάτα για να ανοίξεις:",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
         else:
             await update.message.reply_text("❌ Η φωτογραφία δεν βρέθηκε!")
     else:
@@ -333,12 +375,25 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ─────────────────────────────────────
-# MAIN
+# FLASK ΣΕ THREAD
+# ─────────────────────────────────────
+def run_flask():
+    port = int(os.environ.get("PORT", 5000))
+    logger.info(f"🌐 Web server στο port {port}")
+    flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+# ─────────────────────────────────────
+# MAIN - Bot στο main thread, Flask σε thread
 # ─────────────────────────────────────
 def main():
     init_db()
     logger.info("✅ Database αρχικοποιήθηκε!")
 
+    # Flask σε ξεχωριστό thread
+    flask_thread = Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    # Bot στο main thread (απαιτείται για signals)
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats))
