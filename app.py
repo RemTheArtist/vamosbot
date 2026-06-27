@@ -1,16 +1,13 @@
 import logging
 import sqlite3
-import asyncio
-import threading
 import os
 import io
 from datetime import datetime
 
-from flask import Flask, request, jsonify, send_from_directory, send_file
 from PIL import Image, ImageDraw, ImageFont
 import requests as req
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -26,24 +23,13 @@ TOKEN = "8800151694:AAH3L3xHMI2JtXgbrTjzyoONgY-p89yBCnc"
 ADMIN_ID = 7287706699
 CHANNEL_ID = "-1004477491962"
 BOT_USERNAME = "vamosprive_bot"
-WEBAPP_URL = "https://vamosbot-production.up.railway.app"
+DB_PATH = "bot_database.db"
 
-DB_PATH = "/app/bot_database.db"
-WEBAPP_DIR = os.path.join(os.path.dirname(__file__), "webapp")
-
-# ─────────────────────────────────────
-# LOGGING
-# ─────────────────────────────────────
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# ─────────────────────────────────────
-# FLASK APP
-# ─────────────────────────────────────
-flask_app = Flask(__name__, static_folder=WEBAPP_DIR)
 
 # ─────────────────────────────────────
 # DATABASE
@@ -53,20 +39,20 @@ def init_db():
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS photos (
-            photo_id    TEXT PRIMARY KEY,
-            file_id     TEXT NOT NULL,
-            caption     TEXT,
-            created_at  TEXT NOT NULL
+            photo_id   TEXT PRIMARY KEY,
+            file_id    TEXT NOT NULL,
+            caption    TEXT,
+            created_at TEXT NOT NULL
         )
     """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS views (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            photo_id    TEXT NOT NULL,
-            user_id     INTEGER NOT NULL,
-            username    TEXT,
-            first_name  TEXT,
-            viewed_at   TEXT NOT NULL,
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            photo_id   TEXT NOT NULL,
+            user_id    INTEGER NOT NULL,
+            username   TEXT,
+            first_name TEXT,
+            viewed_at  TEXT NOT NULL,
             UNIQUE(photo_id, user_id)
         )
     """)
@@ -75,8 +61,7 @@ def init_db():
 
 def save_photo(photo_id, file_id, caption=None):
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
+    conn.execute(
         "INSERT INTO photos (photo_id, file_id, caption, created_at) VALUES (?, ?, ?, ?)",
         (photo_id, file_id, caption, datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
     )
@@ -149,11 +134,11 @@ def add_watermark(image_bytes, username, user_id):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     width, height = img.size
 
-    watermark_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(watermark_layer)
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
 
     date_str = datetime.now().strftime("%d/%m/%Y %H:%M")
-    watermark_text = f"@{username}  |  ID: {user_id}  |  {date_str}"
+    text = f"@{username}  |  ID: {user_id}  |  {date_str}"
 
     font_size = max(20, int(width / 30))
     try:
@@ -161,84 +146,49 @@ def add_watermark(image_bytes, username, user_id):
     except:
         font = ImageFont.load_default()
 
-    bbox = draw.textbbox((0, 0), watermark_text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    x = width - tw - 15
+    y = height - th - 15
 
-    padding = 15
-    x = width - text_width - padding
-    y = height - text_height - padding
+    # Shadow
+    draw.text((x+2, y+2), text, font=font, fill=(0, 0, 0, 180))
+    # Κείμενο
+    draw.text((x, y), text, font=font, fill=(255, 255, 255, 220))
 
-    draw.text((x + 2, y + 2), watermark_text, font=font, fill=(0, 0, 0, 180))
-    draw.text((x, y), watermark_text, font=font, fill=(255, 255, 255, 210))
-
-    # Diagonal watermark
-    txt_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    txt_draw = ImageDraw.Draw(txt_layer)
-    diag_font_size = max(30, int(width / 15))
+    # Διαγώνιο watermark
+    diag_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    diag_draw = ImageDraw.Draw(diag_layer)
+    diag_size = max(40, int(width / 12))
     try:
-        diag_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", diag_font_size)
+        diag_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", diag_size)
     except:
         diag_font = ImageFont.load_default()
 
     diag_text = f"@{username}"
-    diag_bbox = txt_draw.textbbox((0, 0), diag_text, font=diag_font)
-    diag_w = diag_bbox[2] - diag_bbox[0]
-    diag_h = diag_bbox[3] - diag_bbox[1]
-    txt_draw.text(((width - diag_w) // 2, (height - diag_h) // 2), diag_text, font=diag_font, fill=(255, 255, 255, 60))
-    txt_layer = txt_layer.rotate(25, expand=False)
+    db = diag_draw.textbbox((0, 0), diag_text, font=diag_font)
+    dw = db[2] - db[0]
+    dh = db[3] - db[1]
+    diag_draw.text(((width-dw)//2, (height-dh)//2), diag_text, font=diag_font, fill=(255, 255, 255, 55))
+    diag_layer = diag_layer.rotate(25, expand=False)
 
-    combined = Image.alpha_composite(img, watermark_layer)
-    combined = Image.alpha_composite(combined, txt_layer)
+    result = Image.alpha_composite(img, layer)
+    result = Image.alpha_composite(result, diag_layer)
 
-    output = io.BytesIO()
-    combined.convert("RGB").save(output, format="JPEG", quality=90)
-    output.seek(0)
-    return output.read()
+    out = io.BytesIO()
+    result.convert("RGB").save(out, format="JPEG", quality=90)
+    out.seek(0)
+    return out.read()
 
-# ─────────────────────────────────────
-# FLASK ROUTES
-# ─────────────────────────────────────
-@flask_app.route("/")
-def index():
-    return send_from_directory(WEBAPP_DIR, "index.html")
-
-@flask_app.route("/api/photo/<photo_id>")
-def get_photo_api(photo_id):
-    photo = get_photo(photo_id)
-    if not photo:
-        return jsonify({"error": "Φωτογραφία δεν βρέθηκε"}), 404
-    return jsonify({
-        "photo_id": photo[0],
-        "caption": photo[2],
-        "created_at": photo[3],
-        "total_views": get_total_views(photo_id)
-    })
-
-@flask_app.route("/api/photo/<photo_id>/image")
-def get_watermarked_photo(photo_id):
-    photo = get_photo(photo_id)
-    if not photo:
-        return jsonify({"error": "Φωτογραφία δεν βρέθηκε"}), 404
-
-    username = request.args.get("username", "unknown")
-    user_id = request.args.get("user_id", "0")
-    first_name = request.args.get("first_name", "Άγνωστος")
-
-    save_view(photo_id, int(user_id), username, first_name)
-
-    file_id = photo[1]
-    try:
-        file_info = req.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}").json()
-        file_path = file_info["result"]["file_path"]
-        image_bytes = req.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}").content
-        watermarked = add_watermark(image_bytes, username, user_id)
-        return send_file(io.BytesIO(watermarked), mimetype="image/jpeg")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+def download_photo(file_id):
+    """Κατεβάζει φωτό από Telegram."""
+    info = req.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}").json()
+    path = info["result"]["file_path"]
+    return req.get(f"https://api.telegram.org/file/bot{TOKEN}/{path}").content
 
 # ─────────────────────────────────────
-# TELEGRAM BOT HANDLERS
+# BOT HANDLERS
 # ─────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -251,6 +201,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_new = save_view(photo_id, user.id, user.username, user.first_name)
             total = get_total_views(photo_id)
 
+            # Κατέβασμα + watermark
+            try:
+                image_bytes = download_photo(photo[1])
+                watermarked = add_watermark(image_bytes, user.username or user.first_name, user.id)
+                caption_text = photo[2] or "🖼️ Εδώ είναι η φωτογραφία!"
+
+                await update.message.reply_photo(
+                    photo=io.BytesIO(watermarked),
+                    caption=f"{caption_text}\n\n👁️ Συνολικές θεάσεις: {total}"
+                )
+            except Exception as e:
+                await update.message.reply_text(f"❌ Σφάλμα φόρτωσης: {e}")
+                return
+
+            # Ειδοποίηση admin
             if is_new:
                 await context.bot.send_message(
                     chat_id=ADMIN_ID,
@@ -266,22 +231,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ),
                     parse_mode="Markdown"
                 )
-
-            # Κουμπί Mini App
-            webapp_url = f"{WEBAPP_URL}/?photo_id={photo_id}"
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "🖼️ Άνοιξε τη Φωτογραφία",
-                    web_app=WebAppInfo(url=webapp_url)
-                )]
-            ])
-
-            caption = photo[2] or "🔒 Πάτα το κουμπί για να δεις τη φωτογραφία!"
-            await update.message.reply_text(
-                f"*{caption}*\n\n👁️ Θεάσεις: {total}\n\n⬇️ Πάτα για να ανοίξεις:",
-                reply_markup=keyboard,
-                parse_mode="Markdown"
-            )
         else:
             await update.message.reply_text("❌ Η φωτογραφία δεν βρέθηκε!")
     else:
@@ -303,17 +252,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_photo(photo_id, file_id, caption)
 
-    # Κουμπί στο κανάλι → ανοίγει απευθείας το Mini App
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "🔓 Δες τη φωτογραφία!",
-            url=f"https://t.me/{BOT_USERNAME}?startapp={photo_id}"
+            url=f"https://t.me/{BOT_USERNAME}?start={photo_id}"
         )]
     ])
 
     await context.bot.send_message(
         chat_id=CHANNEL_ID,
-        text=(f"🖼️ *Νέα Φωτογραφία!*\n\n{caption or '🔒 Πάτα το κουμπί για να τη δεις!'}"),
+        text=f"🖼️ *Νέα Φωτογραφία!*\n\n{caption or '🔒 Πάτα το κουμπί για να τη δεις!'}",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -327,19 +275,16 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.message.from_user.id):
         await update.message.reply_text("❌ Μόνο για admin!")
         return
-
     photos = get_all_photos()
     if not photos:
         await update.message.reply_text("📊 Δεν υπάρχουν φωτογραφίες ακόμα!")
         return
-
     msg = "📊 *ΣΤΑΤΙΣΤΙΚΑ*\n━━━━━━━━━━━━━━\n\n"
     total_all = 0
-    for photo in photos:
-        photo_id, caption, created_at = photo
-        views = get_total_views(photo_id)
-        total_all += views
-        msg += f"📸 `{photo_id}`\n📝 {caption or 'Χωρίς caption'}\n📅 {created_at}\n👁️ *{views}*\n\n"
+    for p in photos:
+        v = get_total_views(p[0])
+        total_all += v
+        msg += f"📸 `{p[0]}` | 👁️ *{v}*\n📝 {p[1] or 'Χωρίς caption'}\n📅 {p[2]}\n\n"
     msg += f"━━━━━━━━━━━━━━\n👁️ Σύνολο: *{total_all}*"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -350,58 +295,49 @@ async def viewers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("📌 Χρήση: `/viewers photo_1`", parse_mode="Markdown")
         return
-
     photo_id = context.args[0]
-    photo = get_photo(photo_id)
-    if not photo:
+    if not get_photo(photo_id):
         await update.message.reply_text("❌ Δεν βρέθηκε!")
         return
-
     views = get_views(photo_id)
     if not views:
-        await update.message.reply_text(f"👁️ Κανείς δεν έχει δει ακόμα!")
+        await update.message.reply_text("👁️ Κανείς δεν έχει δει ακόμα!")
         return
-
     msg = f"👥 *{photo_id}* — {len(views)} θεάσεις\n━━━━━━━━━━━━━━\n\n"
     for v in views:
-        user_id, username, first_name, viewed_at = v
-        msg += f"👤 {first_name} | @{username or 'Κανένα'} | `{user_id}`\n🕐 {viewed_at}\n─────────\n"
+        msg += f"👤 {v[2]} | @{v[1] or 'Κανένα'} | `{v[0]}`\n🕐 {v[3]}\n─────────\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def photos_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.message.from_user.id):
         await update.message.reply_text("❌ Μόνο για admin!")
         return
-
     photos = get_all_photos()
     if not photos:
         await update.message.reply_text("📸 Δεν υπάρχουν φωτογραφίες!")
         return
-
     msg = "📸 *ΛΙΣΤΑ ΦΩΤΟΓΡΑΦΙΩΝ*\n━━━━━━━━━━━━━━\n\n"
-    for photo in photos:
-        photo_id, caption, created_at = photo
-        views = get_total_views(photo_id)
-        msg += f"🆔 `{photo_id}` | 📅 {created_at} | 👁️ {views}\n📝 {caption or 'Χωρίς caption'}\n\n"
+    for p in photos:
+        msg += f"🆔 `{p[0]}` | 👁️ {get_total_views(p[0])} | 📅 {p[2]}\n📝 {p[1] or 'Χωρίς caption'}\n\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.message.from_user.id):
         await update.message.reply_text(f"ℹ️ Πήγαινε στο κανάλι!\n👉 {CHANNEL_ID}")
         return
-    msg = (
+    await update.message.reply_text(
         "🤖 *ΕΝΤΟΛΕΣ ADMIN*\n━━━━━━━━━━━━━━\n\n"
         "📸 Στείλε φωτό για να δημοσιευτεί\n"
-        "📊 /stats\n👥 /viewers photo_1\n📋 /photos\n❓ /help"
+        "📊 /stats\n👥 /viewers photo_1\n📋 /photos\n❓ /help",
+        parse_mode="Markdown"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
 
 # ─────────────────────────────────────
-# ΕΚΚΙΝΗΣΗ BOT ΣΕ THREAD
+# MAIN
 # ─────────────────────────────────────
-def run_bot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+def main():
+    init_db()
+    logger.info("✅ Database αρχικοποιήθηκε!")
 
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -412,20 +348,8 @@ def run_bot():
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, handle_photo))
 
     logger.info("🤖 Bot ξεκίνησε!")
+    print("🤖 Bot τρέχει...")
     app.run_polling()
 
-# ─────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────
 if __name__ == "__main__":
-    init_db()
-    logger.info("✅ Database αρχικοποιήθηκε!")
-
-    # Bot σε ξεχωριστό thread
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-
-    # Flask server
-    port = int(os.environ.get("PORT", 5000))
-    logger.info(f"🌐 Web server στο port {port}")
-    flask_app.run(host="0.0.0.0", port=port, debug=False)
+    main()
