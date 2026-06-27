@@ -303,11 +303,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_photo(photo_id, file_id, caption)
 
-    # Κουμπί στο κανάλι → πάει στο bot → bot ανοίγει Mini App
+    # Κουμπί στο κανάλι → ανοίγει απευθείας το Mini App
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "🔓 Δες τη φωτογραφία!",
-            url=f"https://t.me/{BOT_USERNAME}?start={photo_id}"
+            url=f"https://t.me/{BOT_USERNAME}?startapp={photo_id}"
         )]
     ])
 
