@@ -302,9 +302,9 @@
         document.getElementById("userDisplay").textContent =
             username !== "unknown" ? `@${username}` : firstName;
 
-        // ── Get photo_id from start_param ──
-        const startParam = tg.initDataUnsafe?.start_param || "";
-        const photoId = startParam;
+        // ── Get photo_id (από start_param ή από URL ?photo_id=) ──
+        const urlParams = new URLSearchParams(window.location.search);
+        const photoId = tg.initDataUnsafe?.start_param || urlParams.get("photo_id") || "";
 
         if (!photoId) {
             showError("Δεν βρέθηκε φωτογραφία. Άνοιξε τον σύνδεσμο από το κανάλι.");
