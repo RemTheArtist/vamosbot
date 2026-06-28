@@ -297,7 +297,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "🔓 Δες τη φωτογραφία!",
-            url=f"https://t.me/{BOT_USERNAME}?start={photo_id}"
+            url=f"https://t.me/{BOT_USERNAME}?startapp={photo_id}"
         )]
     ])
 
