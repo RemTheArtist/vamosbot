@@ -1,11 +1,11 @@
 import logging
-import sqlite3
 import os
 import io
-import asyncio
 from datetime import datetime
 from threading import Thread
 
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from PIL import Image, ImageDraw, ImageFont
 import requests as req
@@ -27,7 +27,7 @@ ADMIN_ID = 7287706699
 CHANNEL_ID = "-1004477491962"
 BOT_USERNAME = "vamosprive_bot"
 WEBAPP_URL = "https://vamosbot-production.up.railway.app"
-DB_PATH = "bot_database.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
 
 logging.basicConfig(
@@ -35,14 +35,16 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
 flask_app = Flask(__name__)
 
 # ─────────────────────────────────────
 # DATABASE
 # ─────────────────────────────────────
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS photos (
@@ -54,9 +56,9 @@ def init_db():
     """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS views (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         SERIAL PRIMARY KEY,
             photo_id   TEXT NOT NULL,
-            user_id    INTEGER NOT NULL,
+            user_id    BIGINT NOT NULL,
             username   TEXT,
             first_name TEXT,
             viewed_at  TEXT NOT NULL,
@@ -64,70 +66,80 @@ def init_db():
         )
     """)
     conn.commit()
+    cursor.close()
     conn.close()
 
 def save_photo(photo_id, file_id, caption=None):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT INTO photos (photo_id, file_id, caption, created_at) VALUES (?, ?, ?, ?)",
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO photos (photo_id, file_id, caption, created_at) VALUES (%s, %s, %s, %s)",
         (photo_id, file_id, caption, datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
     )
     conn.commit()
+    cursor.close()
     conn.close()
 
 def get_photo(photo_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM photos WHERE photo_id = ?", (photo_id,))
+    cursor.execute("SELECT * FROM photos WHERE photo_id = %s", (photo_id,))
     result = cursor.fetchone()
+    cursor.close()
     conn.close()
     return result
 
 def save_view(photo_id, user_id, username, first_name):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO views (photo_id, user_id, username, first_name, viewed_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO views (photo_id, user_id, username, first_name, viewed_at) VALUES (%s, %s, %s, %s, %s)",
             (photo_id, user_id, username or "Κανένα", first_name or "Άγνωστος",
              datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
         )
         conn.commit()
         is_new = True
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
         is_new = False
+    cursor.close()
     conn.close()
     return is_new
 
 def get_views(photo_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, first_name, viewed_at FROM views WHERE photo_id = ?", (photo_id,))
+    cursor.execute("SELECT user_id, username, first_name, viewed_at FROM views WHERE photo_id = %s", (photo_id,))
     results = cursor.fetchall()
+    cursor.close()
     conn.close()
     return results
 
 def get_total_views(photo_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM views WHERE photo_id = ?", (photo_id,))
+    cursor.execute("SELECT COUNT(*) FROM views WHERE photo_id = %s", (photo_id,))
     count = cursor.fetchone()[0]
+    cursor.close()
     conn.close()
     return count
 
 def get_all_photos():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cursor = conn.cursor()
     cursor.execute("SELECT photo_id, caption, created_at FROM photos ORDER BY created_at DESC")
     results = cursor.fetchall()
+    cursor.close()
     conn.close()
     return results
 
 def get_next_photo_id():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM photos")
     count = cursor.fetchone()[0]
+    cursor.close()
     conn.close()
     return f"photo_{count + 1}"
 
@@ -258,7 +270,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown"
                 )
 
-            # Κουμπί Mini App
             webapp_url = f"{WEBAPP_URL}/?photo_id={photo_id}"
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton(
@@ -294,10 +305,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_photo(photo_id, file_id, caption)
 
+    # Κουμπί με t.me/BOT/APPNAME για να ανοίγει απευθείας από κανάλι
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "🔓 Δες τη φωτογραφία!",
-            url=f"https://t.me/{BOT_USERNAME}?startapp={photo_id}"
+            url=f"https://t.me/{BOT_USERNAME}/view?startapp={photo_id}"
         )]
     ])
 
@@ -383,17 +395,15 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # ─────────────────────────────────────
-# MAIN - Bot στο main thread, Flask σε thread
+# MAIN
 # ─────────────────────────────────────
 def main():
     init_db()
     logger.info("✅ Database αρχικοποιήθηκε!")
 
-    # Flask σε ξεχωριστό thread
     flask_thread = Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    # Bot στο main thread (απαιτείται για signals)
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats))
